@@ -1,0 +1,8 @@
+# Batch files must keep CRLF in the repository itself: raw.githubusercontent.com
+# serves the stored bytes, and cmd.exe mis-handles labels (goto/call) in
+# LF-only files. -text stops Git (and core.autocrlf) from converting them.
+*.cmd -text
+*.bat -text
+
+# Shell scripts must stay LF or bash fails with "$'\r': command not found".
+*.sh text eol=lf
