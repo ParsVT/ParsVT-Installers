@@ -1,6 +1,6 @@
 # ParsVT CRM Automated Installers
 
-**English** | [فارسی](README.fa.md)
+**English** | [فارسی](README.md)
 
 Official automated deployment scripts for **ParsVT CRM** (Persian-localized Vtiger CRM) on Linux and Windows servers.
 
