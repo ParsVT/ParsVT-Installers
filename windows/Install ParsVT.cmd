@@ -15,7 +15,7 @@ echo ######  ####### ######  ####### ##    ##    ##
 echo ##      ##   ## ##   ##      ##  ##  ##     ##
 echo ##      ##   ## ##   ## #######   ####      ##
 echo.
-echo Bash script to install ParsVT CRM on Windows.
+echo One-click installer for ParsVT CRM on Windows Server.
 echo.
 
 if not exist "%PARSVT_DIR%parsvt.ps1" (
