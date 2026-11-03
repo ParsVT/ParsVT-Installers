@@ -1,6 +1,6 @@
 # نصب‌کننده‌های خودکار ParsVT CRM
 
-[English](README.md) | **فارسی**
+[English](README.en.md) | **فارسی**
 
 اسکریپت‌های رسمی نصب خودکار **ParsVT CRM** (نسخهٔ فارسی Vtiger CRM) روی سرورهای لینوکس و ویندوز.
 
@@ -8,7 +8,7 @@
 
 | سیستم‌عامل | اسکریپت | راهنمای کامل |
 |---|---|---|
-| لینوکس | [`linux/parsvt.sh`](linux/parsvt.sh) | [`linux/README.en.md`](linux/README.md) |
+| لینوکس | [`linux/parsvt.sh`](linux/parsvt.sh) | [`linux/README.md`](linux/README.md) |
 | Windows Server | [`windows/parsvt.ps1`](windows/parsvt.ps1) | [`windows/README.md`](windows/README.md) |
 
 ---
