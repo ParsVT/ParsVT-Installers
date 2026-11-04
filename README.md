@@ -50,7 +50,7 @@ Start-Process -FilePath (Join-Path $dir "Install ParsVT.cmd") -Verb RunAs
 - `Tls12`: PowerShell 5.1 روی Server 2016 به‌طور پیش‌فرض از TLS 1.2 استفاده نمی‌کند و GitHub بدون آن وصل نمی‌شود.
 - `C:\ParsVT-Setup`: فایل‌ها برای اجرای بعدی تعمیر (Repair) در این پوشه می‌مانند. پوشهٔ `%TEMP%` ممکن است هر زمانی پاک شود.
 
-لانچر اول سرور را بررسی می‌کند (`preflight.ps1`) و بعد **فقط کلید لایسنس** را می‌پرسد.
+لانچر اول سرور را بررسی می‌کند (`preflight.ps1`) و بعد فقط **نسخهٔ Vtiger** (با Enter نسخهٔ 8) و **کلید لایسنس** را می‌پرسد.
 
 **روش دستی:** سه فایل پوشهٔ [`windows`](windows) را در یک پوشهٔ محلی دانلود کنید، روی `Install ParsVT.cmd` راست‌کلیک کنید و **Run as administrator** را بزنید. اگر فایل‌ها را به‌صورت ZIP گرفته‌اید، اول کل ZIP را استخراج کنید.
 
@@ -70,7 +70,7 @@ Start-Process -FilePath (Join-Path $dir "Install ParsVT.cmd") -Verb RunAs
   - لینوکس به تعدادی که هنگام نصب انتخاب می‌کنید نسخهٔ پشتیبان نگه می‌دارد.
   - ویندوز پشتیبان‌ها را 7 روز نگه می‌دارد.
 - **عیب‌یابی داخلی (ویندوز):** اگر نصب شکست بخورد، یک فایل گزارش (zip) روی دسکتاپ ساخته می‌شود. رمزها از لاگ‌ها حذف می‌شوند و فایل‌های حاوی رمز هرگز داخل گزارش قرار نمی‌گیرند.
-- **حالت سریع (ویندوز):** با `-Quick`، که `Install ParsVT.cmd` از آن استفاده می‌کند، فقط کلید لایسنس پرسیده می‌شود.
+- **حالت سریع (ویندوز):** با `-Quick`، که `Install ParsVT.cmd` از آن استفاده می‌کند، فقط نسخهٔ Vtiger و کلید لایسنس پرسیده می‌شود. انتخاب Vtiger 7 یک تأیید دوم لازم دارد.
 
 ---
 
@@ -125,13 +125,14 @@ bash parsvt.sh --php-upgrade --upgrade    # do it
 از یک PowerShell با دسترسی Administrator، داخل پوشهٔ `C:\ParsVT-Setup` اجرا کنید:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\parsvt.ps1 [-Quick] [-SkipPreflight] [-DryRun]
+powershell -NoProfile -ExecutionPolicy Bypass -File .\parsvt.ps1 [-Quick] [-Vtiger 8|7] [-SkipPreflight] [-DryRun]
 ```
 
 | پارامتر | کار |
 |---|---|
 | (بدون پارامتر) | منو: نصب Vtiger 8 یا 7، تعمیر، به‌روزرسانی ionCube. پورت، مسیرها، دامنه و SSL پرسیده می‌شوند |
-| `-Quick` | فقط کلید لایسنس پرسیده می‌شود؛ بقیه پیش‌فرض است (پورت 80، `C:\Apache24`، بدون دامنه و SSL). اگر CRM از قبل نصب باشد تعمیر اجرا می‌شود |
+| `-Quick` | فقط نسخهٔ Vtiger و کلید لایسنس پرسیده می‌شوند؛ بقیه پیش‌فرض است (پورت 80، `C:\Apache24`، بدون دامنه و SSL). اگر CRM از قبل نصب باشد تعمیر اجرا می‌شود |
+| `-Vtiger 8` / `-Vtiger 7` | همراه `-Quick`: همان نسخه بدون پرسش نصب می‌شود |
 | `-SkipPreflight` | همراه `-Quick`: بررسی پیش از نصب انجام نمی‌شود |
 | `-DryRun` | کارهایی را که انجام می‌شود نشان می‌دهد، بدون هیچ تغییری |
 
