@@ -28,6 +28,8 @@
 #     chosen during install) instead of 127.0.0.1.
 #   - -Quick on a server where the CRM is already installed runs Repair
 #     instead of a new install.
+#   - -Quick asks which Vtiger version to install (Enter = 8; 7 needs a
+#     second confirmation). -Vtiger 8 / -Vtiger 7 answers it in advance.
 #   - ionCube: an unchanged loader is not copied again; a loader held open
 #     by php-cgi.exe is replaced after stopping Apache briefly (install
 #     failed with "being used by another process" while Apache was running).
@@ -121,8 +123,10 @@
 
 param(
     [switch]$DryRun,
-    [switch]$Quick,         # only the license key is asked; see Main-Install and the Get-* prompts
-    [switch]$SkipPreflight  # -Quick only: do not run preflight.ps1 first
+    [switch]$Quick,         # only the Vtiger version and the license key are asked; see Main-Install and the Get-* prompts
+    [switch]$SkipPreflight, # -Quick only: do not run preflight.ps1 first
+    [ValidateSet("", "7", "8")]
+    [string]$Vtiger = ""    # -Quick only: Vtiger version without asking (8 = PHP 8.3, 7 = PHP 7.4)
 )
 
 $ErrorActionPreference = "Stop"
@@ -3154,6 +3158,32 @@ function Test-WebRouting {
     } elseif ($r.Code -eq 404) { Write-Ok "Error pages: a missing page returns HTTP 404 through the CRM error page." }
 }
 
+# Quick mode: the one question besides the license key. Enter = Vtiger 8.
+# Vtiger 7 needs a second "y", so a non-technical user does not pick the
+# deprecated PHP 7.4 stack by accident. -Vtiger skips the question.
+function Select-QuickVtigerVersion {
+    if ($Vtiger -eq "8") { Write-Host "Quick mode: installing ParsVT CRM - Vtiger 8 / PHP 8.3." -ForegroundColor Cyan; return "1" }
+    if ($Vtiger -eq "7") { Write-Warn "Quick mode: installing ParsVT CRM - Vtiger 7 / PHP 7.4 (DEPRECATED)."; return "2" }
+    for ($i = 0; $i -lt 4; $i++) {
+        Write-Host ""
+        Write-Host "Which version do you want to install?" -ForegroundColor Cyan
+        Write-Host "  [1] Vtiger 8 / PHP 8.3 (recommended)" -ForegroundColor Cyan
+        Write-Host "  [2] Vtiger 7 / PHP 7.4 (DEPRECATED - only for compatibility with older installations)" -ForegroundColor Yellow
+        Write-Host "  [0] Cancel" -ForegroundColor Yellow
+        $a = (Read-Host "Please select (Enter = 1)").Trim()
+        if ($a -eq "" -or $a -eq "1") { Write-Ok "Vtiger 8 / PHP 8.3."; return "1" }
+        if ($a -eq "0") { return "0" }
+        if ($a -eq "2") {
+            Write-Warn "PHP 7.4 has had no security updates since November 2022. Choose Vtiger 7 only if you need it for an older installation or module."
+            $c = (Read-Host "Install Vtiger 7 / PHP 7.4 anyway? (y/n)").Trim()
+            if ($c -match '^[yY]') { Write-Ok "Vtiger 7 / PHP 7.4."; return "2" }
+            continue
+        }
+        Write-Err "Invalid selection."
+    }
+    Stop-Install "No valid version selected." 2
+}
+
 function Main-Install {
     param([int]$VtigerVersion)
     $phpVer = $Config.VtigerToPHP[$VtigerVersion]
@@ -3204,7 +3234,7 @@ function Main-Install {
 
     $doSsl = "n"
     if (-not $Quick) { $doSsl = Read-Host "Install SSL certificate now? (y/n)" }
-    else { Write-Host "  Quick mode: SSL skipped. Run parsvt.ps1 without -Quick later to add a domain and SSL." }
+    else { Write-Host "  Quick mode: SSL skipped. A domain and SSL are set up only during an interactive install (parsvt.ps1 without -Quick)." }
     if ($doSsl -match "^[yY]") {
         if (Install-SSL) {
             Write-Host "  CRM URL (SSL): https://$($Config.Domain)/" -ForegroundColor Yellow
@@ -3305,7 +3335,7 @@ if (-not (Test-Admin)) { Write-Err "This script must run as Administrator."; exi
 Write-Host "ParsVT CRM Installer for Windows" -ForegroundColor Yellow
 Write-Host "Version 2.11 - native PowerShell (no Cygwin, no XAMPP)" -ForegroundColor Yellow
 if ($DryRun) { Write-Host "DRY RUN MODE - no changes will be made" -ForegroundColor Magenta }
-if ($Quick)  { Write-Host "QUICK MODE - only the license key is asked; defaults are used for everything else" -ForegroundColor Magenta }
+if ($Quick)  { Write-Host "QUICK MODE - only the Vtiger version and the license key are asked; defaults are used for everything else" -ForegroundColor Magenta }
 Write-Host ""
 
 # Everything below runs inside one try/catch: any unexpected error ends in
@@ -3332,7 +3362,10 @@ try {
         Write-Host "Quick mode: ParsVT CRM is already installed at $($Config.WebRoot); running Repair (keeps all data)." -ForegroundColor Cyan
         Write-Host "  To reinstall from scratch, run parsvt.ps1 without -Quick and choose 1." -ForegroundColor Cyan
     }
-    elseif ($Quick) { $choice = "1"; Write-Host "Quick mode: installing ParsVT CRM - Vtiger 8 / PHP 8.3." -ForegroundColor Cyan }
+    elseif ($Quick) {
+        $choice = Select-QuickVtigerVersion
+        if ($choice -eq "0") { Write-Host "Cancelled."; Suspend-InstallLog; exit 0 }
+    }
     else { $choice = Show-Menu }
     switch ($choice) {
         "1" { Main-Install -VtigerVersion 8 }
