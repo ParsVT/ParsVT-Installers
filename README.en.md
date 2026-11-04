@@ -47,7 +47,7 @@ What each part does:
 - `Tls12`: Windows PowerShell 5.1 on Server 2016 does not use TLS 1.2 by default, and GitHub requires it.
 - `C:\ParsVT-Setup`: the files stay there for later Repair runs. `%TEMP%` can be cleaned at any time.
 
-The launcher checks the server first (`preflight.ps1`), then asks **only for the license key**.
+The launcher checks the server first (`preflight.ps1`), then asks **which Vtiger version** to install (Enter = Vtiger 8) and **the license key**.
 
 **Manual alternative:** download the three files from the [`windows`](windows) folder into one local folder, then right-click `Install ParsVT.cmd` → **Run as administrator**. If you downloaded them as a ZIP, extract the whole ZIP first.
 
@@ -67,7 +67,7 @@ The launcher checks the server first (`preflight.ps1`), then asks **only for the
   - Linux keeps the number of backup sets you choose during installation.
   - Windows keeps backups for 7 days.
 - **Built-in diagnostics (Windows):** a failed installation writes a support bundle (zip) to the Desktop. Passwords are removed from the logs, and the credential files are never included.
-- **Quick mode (Windows):** `-Quick`, used by `Install ParsVT.cmd`, asks only for the license key.
+- **Quick mode (Windows):** `-Quick`, used by `Install ParsVT.cmd`, asks only for the Vtiger version and the license key. Vtiger 7 needs a second confirmation.
 
 ---
 
@@ -121,13 +121,14 @@ bash parsvt.sh --php-upgrade --upgrade    # do it
 Run from an elevated PowerShell in `C:\ParsVT-Setup`:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\parsvt.ps1 [-Quick] [-SkipPreflight] [-DryRun]
+powershell -NoProfile -ExecutionPolicy Bypass -File .\parsvt.ps1 [-Quick] [-Vtiger 8|7] [-SkipPreflight] [-DryRun]
 ```
 
 | Flag | Effect |
 |---|---|
 | (none) | Menu: install Vtiger 8 or 7, Repair, update ionCube. Asks for port, paths, domain and SSL |
-| `-Quick` | Asks only for the license key; uses defaults (port 80, `C:\Apache24`, no domain or SSL). Runs Repair if the CRM is already installed |
+| `-Quick` | Asks only for the Vtiger version and the license key; uses defaults (port 80, `C:\Apache24`, no domain or SSL). Runs Repair if the CRM is already installed |
+| `-Vtiger 8` / `-Vtiger 7` | With `-Quick`: installs that version without asking |
 | `-SkipPreflight` | With `-Quick`: skips the pre-installation checks |
 | `-DryRun` | Shows what would be done without changing anything |
 
