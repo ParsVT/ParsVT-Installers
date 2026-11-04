@@ -28,6 +28,17 @@
 #     chosen during install) instead of 127.0.0.1.
 #   - -Quick on a server where the CRM is already installed runs Repair
 #     instead of a new install.
+#   - Menu 5: update PHP to the build in this installer (same version);
+#     tested next to the old build, rolled back if the CRM fails on it.
+#   - Menu 6: switch the CRM between PHP 7.4 and 8.3 (both stay installed);
+#     Vtiger 7 -> 8 migration step 3 and its rollback.
+#   - Repair keeps the PHP version in use instead of deriving it from the
+#     Vtiger version (a server mid-migration was switched to PHP 8.3).
+#   - Apache and MariaDB: StartupType Automatic and crash recovery (restart
+#     after 1 minute, up to 3 times a day) on install and on repair.
+#   - -Quick on an installed server shows the maintenance options (Repair,
+#     ionCube, PHP update, PHP switch; Enter = Repair) instead of always
+#     running Repair.
 #   - -Quick asks which Vtiger version to install (Enter = 8; 7 needs a
 #     second confirmation). -Vtiger 8 / -Vtiger 7 answers it in advance.
 #   - ionCube: an unchanged loader is not copied again; a loader held open
@@ -885,9 +896,11 @@ function Show-Menu {
     Write-Host "  [2] Install ParsVT CRM - Vtiger 7 / PHP 7.4 (DEPRECATED)"  -ForegroundColor Yellow
     Write-Host "  [3] Repair installation"                                  -ForegroundColor Cyan
     Write-Host "  [4] Update ionCube loader only"                           -ForegroundColor Cyan
+    Write-Host "  [5] Update PHP to the latest build of the same version"   -ForegroundColor Cyan
+    Write-Host "  [6] Switch the CRM's PHP version (7.4 <-> 8.3, Vtiger 7 to 8 migration step 3)" -ForegroundColor Cyan
     Write-Host "  [0] Cancel"                                               -ForegroundColor Yellow
     Write-Host ""
-    return Read-Host "Please select an action (0-4)"
+    return Read-Host "Please select an action (0-6)"
 }
 
 # =============================================================================
@@ -2436,6 +2449,26 @@ function Install-BackupScript {
     return $true
 }
 
+# Apache and MariaDB start with Windows and are restarted by the Service
+# Control Manager when they crash: up to three times, one minute apart; the
+# failure counter resets after a day without failures. failureflag 1 also
+# applies the actions when the service stops with an error code, not only
+# when the process dies. Run on install and on repair, so a service someone
+# set to Manual is put back. sc.exe by full path: "sc" is Set-Content in PowerShell.
+function Set-ServiceRecovery {
+    Write-Step "Setting automatic start and crash recovery for the services..."
+    if ($DryRun) { Write-Host "  [DRY] $($Config.ApacheService), MariaDB: StartupType Automatic, restart on failure"; return }
+    $sc = Join-Path $env:SystemRoot "System32\sc.exe"
+    foreach ($name in @($Config.ApacheService, "MariaDB")) {
+        if (-not (Get-Service -Name $name -ErrorAction SilentlyContinue)) { Write-Warn "Service '$name' not found; skipped."; continue }
+        try { Set-Service -Name $name -StartupType Automatic } catch { Write-Warn "Cannot set '$name' to Automatic: $($_.Exception.Message)" }
+        $a = Invoke-Native $sc @("failure", $name, "reset=", "86400", "actions=", "restart/60000/restart/60000/restart/60000") -Step "sc failure $name" -AllowFailure
+        $b = Invoke-Native $sc @("failureflag", $name, "1") -Step "sc failureflag $name" -AllowFailure
+        if ($a.Ok -and $b.Ok) { Write-Ok "Service '$name': starts with Windows, restarted automatically after a crash." }
+        else { Write-Warn ("Service '$name': crash recovery not set. " + "$($a.All) $($b.All)".Trim()) }
+    }
+}
+
 function Install-ScheduledTasks {
     Write-Step "Registering scheduled tasks..."
     if ($DryRun) { Write-Host "  [DRY] Register ParsVT-Backup and ParsVT-VtigerCron"; return }
@@ -2647,6 +2680,12 @@ function Install-PathEnvironment {
 
     $cur = Get-MachinePathRaw
     $old = $cur.Value
+    # Only one ParsVT PHP folder belongs on the PATH: after a PHP switch the
+    # other one would come first and "php" would run the wrong version.
+    $otherPHP = @(@($Config.PHP74Dir, $Config.PHP83Dir) | ForEach-Object { ConvertTo-PathKey $_ } | Where-Object { $_ -ne (ConvertTo-PathKey $phpDir) })
+    $keptRaw = @($old -split ';' | Where-Object { $_.Trim() -ne "" -and ($otherPHP -notcontains (ConvertTo-PathKey $_)) })
+    $removedPHP = (@($old -split ';' | Where-Object { $_.Trim() -ne "" }).Count -ne $keptRaw.Count)
+    if ($removedPHP) { $old = $keptRaw -join ';' }
     $entries = @($old -split ';' | Where-Object { $_.Trim() -ne "" })
     $keys = @($entries | ForEach-Object { ConvertTo-PathKey $_ })
     $added = @($wanted | Where-Object { $keys -notcontains (ConvertTo-PathKey $_) })
@@ -2685,6 +2724,11 @@ function Install-PathEnvironment {
         Write-Ok "Added to the machine PATH: $($added -join '; ')"
         Send-EnvironmentChange
         Write-Warn "Running services (Apache, MariaDB) see the new PATH only after a reboot; ParsVT itself does not depend on it."
+    } elseif ($removedPHP) {
+        Set-MachinePathRaw -Value $old -Kind $cur.Kind
+        Write-Host "  Machine PATH after:  $old"
+        Write-Ok "Removed the other ParsVT PHP folder from the machine PATH."
+        Send-EnvironmentChange
     } else {
         Write-Ok "PHP and MariaDB are already on the machine PATH."
     }
@@ -3184,6 +3228,32 @@ function Select-QuickVtigerVersion {
     Stop-Install "No valid version selected." 2
 }
 
+# Quick mode on a server where the CRM is installed: the maintenance part of
+# the main menu, same numbers. Enter = Repair. With -Vtiger (unattended runs)
+# Repair runs without asking, as before.
+function Select-QuickMaintenance {
+    $ver = Get-VtigerVersion
+    $php = Get-ActivePHPVersion
+    Write-Host ""
+    Write-Host "ParsVT CRM is already installed at $($Config.WebRoot)$(if ($ver) { " (Vtiger $ver" + $(if ($php) { ", PHP $php" }) + ")" })." -ForegroundColor Cyan
+    if ($Vtiger) { Write-Host "Quick mode with -Vtiger: running Repair (keeps all data)." -ForegroundColor Cyan; return "3" }
+    for ($i = 0; $i -lt 4; $i++) {
+        Write-Host ""
+        Write-Host "What do you want to do?" -ForegroundColor Cyan
+        Write-Host "  [3] Repair installation (keeps all data)"                  -ForegroundColor Cyan
+        Write-Host "  [4] Update ionCube loader"                                 -ForegroundColor Cyan
+        Write-Host "  [5] Update PHP to the latest build of the same version"    -ForegroundColor Cyan
+        Write-Host "  [6] Switch the CRM's PHP version (7.4 <-> 8.3)"           -ForegroundColor Cyan
+        Write-Host "  [0] Cancel"                                                -ForegroundColor Yellow
+        Write-Host "  To reinstall from scratch, run parsvt.ps1 without -Quick and choose 1." -ForegroundColor DarkGray
+        $a = (Read-Host "Please select (Enter = 3)").Trim()
+        if ($a -eq "") { $a = "3" }
+        if (@("0", "3", "4", "5", "6") -contains $a) { return $a }
+        Write-Err "Invalid selection."
+    }
+    Stop-Install "No valid option selected." 2
+}
+
 function Main-Install {
     param([int]$VtigerVersion)
     $phpVer = $Config.VtigerToPHP[$VtigerVersion]
@@ -3224,6 +3294,7 @@ function Main-Install {
 
     if (-not (Install-BackupScript)) { Write-Warn "Backup script installation failed." }
     Install-ScheduledTasks
+    Set-ServiceRecovery
     Open-FirewallPorts
     if (-not $DryRun) { Set-DirAcl -Path $Config.PHPBaseDir -UsersRead }
     Save-InstallState
@@ -3271,7 +3342,33 @@ function Read-CRMDBConfig {
     return $true
 }
 
+# PHP version Apache runs the CRM with, read from parsvt-php.conf ("" if unknown).
+function Get-ActivePHPVersion {
+    $f = Join-Path $Config.ApacheDir "conf\extra\parsvt-php.conf"
+    if (-not (Test-Path $f)) { return "" }
+    $c = [IO.File]::ReadAllText($f)
+    foreach ($v in @("8.3", "7.4")) {
+        $w = "FcgidWrapper `"" + (ConvertTo-ApachePath (Get-PHPDir $v)) + "/php-cgi.exe"
+        if ($c.IndexOf($w, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $v }
+    }
+    return ""
+}
+
+# PHP_VERSION of a php.exe ("" if it does not run).
+function Get-PHPExeVersion {
+    param([string]$PHPDir)
+    $php = Join-Path $PHPDir "php.exe"
+    if (-not (Test-Path $php)) { return "" }
+    $r = Invoke-Native $php @("-n", "-r", "echo PHP_VERSION;") -Step "php version" -AllowFailure
+    if ($r.Ok -and "$($r.Output)".Trim() -match '^\d+\.\d+\.\d+') { return $Matches[0] }
+    return ""
+}
+
+# Repair keeps the PHP version the CRM runs on: a server in the middle of the
+# Vtiger 7 -> 8 migration (Vtiger 8.0.0 on PHP 7.4) must not be switched to
+# 8.3 by a repair. -PHPVersion is used by Main-PHPSwitch.
 function Main-Repair {
+    param([string]$PHPVersion = "")
     Write-Step "Repair mode"
     Write-Host "  Apache: $($Config.ApacheDir)  Web root: $($Config.WebRoot)  Port: $($Config.ApachePort)$(if ($Config.Domain) { "  Domain: $($Config.Domain)" })"
     if (-not (Test-Path (Join-Path $Config.WebRoot "config.inc.php"))) { Stop-Install "ParsVT is not installed at $($Config.WebRoot)." }
@@ -3279,8 +3376,12 @@ function Main-Repair {
     if (-not $ver) { Stop-Install "Cannot detect Vtiger version." }
     $major = [int]($ver.Split(".")[0])
     $Config.VtigerVersion = $major
-    $Config.PHPVersion    = $Config.VtigerToPHP[$major]
-    Write-Ok "Detected Vtiger $ver -> PHP $($Config.PHPVersion)"
+    $active = Get-ActivePHPVersion
+    if ($PHPVersion)  { $Config.PHPVersion = $PHPVersion; $src = "requested" }
+    elseif ($active)  { $Config.PHPVersion = $active;     $src = "in use" }
+    else              { $Config.PHPVersion = $Config.VtigerToPHP[$major]; $src = "default for Vtiger $major" }
+    Write-Ok "Detected Vtiger $ver; PHP $($Config.PHPVersion) ($src)"
+    if ($major -eq 7 -and $Config.PHPVersion -ne "7.4") { Write-Warn "Vtiger 7 does not run on PHP $($Config.PHPVersion). Switch back with option 6, or finish the Vtiger 8 upgrade." }
     $php = Join-Path (Get-PHPDir $Config.PHPVersion) "php.exe"
     if (-not (Test-Path $php)) { Stop-Install "PHP $($Config.PHPVersion) is not installed at $(Get-PHPDir $Config.PHPVersion)." }
 
@@ -3302,6 +3403,7 @@ function Main-Repair {
     Test-WebRouting
     if (-not (Install-BackupScript))                           { Stop-Install "" }
     Install-ScheduledTasks
+    Set-ServiceRecovery
     Open-FirewallPorts
     Set-DirAcl -Path $Config.ApacheDir -UsersRead
     Set-DirAcl -Path $Config.PHPBaseDir -UsersRead
@@ -3310,6 +3412,131 @@ function Main-Repair {
     Install-Shortcuts
     Install-PhpMyAdmin
     Write-Ok "Repair complete."
+}
+
+# Option 5: replaces the active PHP with the build in Config.Downloads (same
+# minor version, e.g. 8.3.30 -> 8.3.33). The new build is extracted and tested
+# next to the old one first; the old folder is kept as <dir>.old-<time> and
+# put back if anything fails after the swap. php.ini is carried over.
+function Main-PHPUpdate {
+    Write-Step "Update PHP"
+    if (-not (Test-Path (Join-Path $Config.WebRoot "config.inc.php"))) { Stop-Install "ParsVT is not installed at $($Config.WebRoot)." }
+    $v = Get-ActivePHPVersion
+    if (-not $v) { Stop-Install "Cannot tell which PHP version Apache uses (no parsvt-php.conf). Run Repair (option 3) first." }
+    $Config.PHPVersion = $v
+    $dir = Get-PHPDir $v
+    $dl  = "PHP" + ($v -replace '\.', '')
+    $cur = Get-PHPExeVersion $dir
+    $new = ""
+    if ($Config.Downloads[$dl].File -match 'php-(\d+\.\d+\.\d+)-') { $new = $Matches[1] }
+    Write-Host "  PHP in use: $cur ($dir)   Build in this installer: $new"
+    if ($cur -and $new -and ([version]$cur -ge [version]$new)) { Write-Ok "PHP $cur is already up to date."; return }
+    if ($DryRun) { Write-Host "  [DRY] Download $($Config.Downloads[$dl].Url), test it, swap $dir, reinstall ionCube"; return }
+    if (-not (Install-VCRedist)) { Stop-Install "Visual C++ runtime installation failed. Nothing was changed." }
+
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $stage = "$dir.new-$stamp"
+    $old   = "$dir.old-$stamp"
+    $zip   = Join-Path $env:TEMP $Config.Downloads[$dl].File
+    if (-not (Invoke-ConfiguredDownload $dl $zip)) { Stop-Install "PHP download failed. Nothing was changed." }
+    Expand-ZipFile $zip $stage
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+    $got = Get-PHPExeVersion $stage
+    if (-not $got) { Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue; Stop-Install "The downloaded PHP does not run (missing VC++ runtime or a broken download). Nothing was changed." }
+    if ($got -notlike "$v.*") { Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue; Stop-Install "The download is PHP $got, not PHP $v. Nothing was changed." }
+    Copy-Item (Join-Path $dir "php.ini") (Join-Path $stage "php.ini") -Force -ErrorAction SilentlyContinue
+    # Extensions someone added by hand would silently disappear.
+    $extra = @(Get-ChildItem (Join-Path $dir "ext") -Filter "*.dll" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notlike "ioncube_loader_*" -and -not (Test-Path (Join-Path $stage "ext\$($_.Name)")) } | ForEach-Object { $_.Name })
+    if ($extra.Count) { Write-Warn "Not in the new build (copy them back by hand if you need them): $($extra -join ', ')" }
+
+    Write-Step "Replacing PHP $cur with $got (the CRM is offline for a minute)..."
+    Stop-Apache
+    Get-Process -Name php-cgi -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase) } |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    try { Move-Item $dir $old; Move-Item $stage $dir }
+    catch {
+        if (-not (Test-Path $dir) -and (Test-Path $old)) { Move-Item $old $dir }
+        Restart-Apache | Out-Null
+        Stop-Install "Could not swap the PHP folder ($($_.Exception.Message)). The old PHP is back in place."
+    }
+    $ok = (Install-IonCube -PHPVersion $v) -and (Test-PHPModules $dir) -and (Restart-Apache)
+    if ($ok) {
+        $r = Get-LocalHttp "/"
+        if ($r.Code -eq 0 -or $r.Code -ge 500) { Write-Err "The CRM answered HTTP $($r.Code) with the new PHP."; $ok = $false }
+    }
+    if (-not $ok) {
+        Write-Warn "Rolling back to PHP $cur..."
+        Stop-Apache
+        Get-Process -Name php-cgi -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -and $_.Path.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase) } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+        Move-Item $dir "$dir.failed-$stamp"
+        Move-Item $old $dir
+        Restart-Apache | Out-Null
+        Stop-Install "PHP update failed; PHP $cur is back in place. The failed build is in $dir.failed-$stamp."
+    }
+    Set-DirAcl -Path $Config.PHPBaseDir -UsersRead
+    Test-WebRouting
+    Save-InstallState
+    Write-Ok "PHP updated: $cur -> $got. The previous build is in $old (delete it once the CRM works)."
+}
+
+# Option 6: runs the CRM on the other PHP version. Both versions stay
+# installed side by side (C:\PHP\7.4 and C:\PHP\8.3), so going back is the
+# same option again. Target PHP and its ionCube loader are installed and
+# tested before Apache is touched; then Repair rewrites everything that
+# points at PHP (Apache, phpMyAdmin, cron, PATH).
+function Main-PHPSwitch {
+    Write-Step "Switch PHP version"
+    if (-not (Test-Path (Join-Path $Config.WebRoot "config.inc.php"))) { Stop-Install "ParsVT is not installed at $($Config.WebRoot)." }
+    $ver = Get-VtigerVersion
+    if (-not $ver) { Stop-Install "Cannot detect Vtiger version." }
+    $from = Get-ActivePHPVersion
+    if (-not $from) { Stop-Install "Cannot tell which PHP version Apache uses (no parsvt-php.conf). Run Repair (option 3) first." }
+    $to = "8.3"; if ($from -eq "8.3") { $to = "7.4" }
+    Write-Host "  Vtiger $ver runs on PHP $from. Installed: PHP 7.4 $(if (Test-Path (Join-Path $Config.PHP74Dir 'php.exe')) { 'yes' } else { 'no' }), PHP 8.3 $(if (Test-Path (Join-Path $Config.PHP83Dir 'php.exe')) { 'yes' } else { 'no' })"
+    Write-Host ""
+    if ($to -eq "8.3") {
+        Write-Host "This is step 3 of the Vtiger 7 -> 8.4 migration. Before it:" -ForegroundColor Yellow
+        Write-Host "  1. every ParsVT module is the multi-version ionCube package (All)" -ForegroundColor Yellow
+        Write-Host "  2. Vtiger is upgraded to 8.0.0 (still on PHP 7.4)" -ForegroundColor Yellow
+        if ([int]($ver.Split(".")[0]) -lt 8) { Stop-Install "Vtiger $ver is installed, and Vtiger 7 does not run on PHP 8. Upgrade Vtiger to 8.0.0 first (migration step 2). Nothing was changed." 5 }
+        $word = "upgrade"
+    } else {
+        Write-Host "This puts the CRM back on PHP 7.4 (rollback of migration step 3)." -ForegroundColor Yellow
+        if ($ver -notmatch '^(7\.|8\.0\.)') { Write-Warn "Vtiger $ver may need PHP 8; check it supports PHP 7.4 before going back." }
+        $word = "rollback"
+    }
+    if (-not (Confirm-Typed "The CRM will run on PHP $to. It is offline for a few minutes." $word)) { Write-Host "Cancelled. Nothing was changed."; return }
+    if ($DryRun) { Write-Host "  [DRY] Install PHP $to + ionCube, then Repair with PHP $to"; return }
+
+    $bk = Join-Path $Config.BackupScriptDir "backup.ps1"
+    if (Test-Path $bk) {
+        $a = (Read-Host "Run a backup first? (recommended, Y/n)").Trim()
+        if ($a -notmatch '^[nN]') {
+            Write-Step "Backing up the database and files..."
+            $r = Invoke-Native (Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe") @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $bk) -Step "backup" -AllowFailure
+            if (-not $r.Ok) { Stop-Install "The backup failed, so PHP was not switched. See $(Join-Path $Config.LogDir 'crm_backup.log')." }
+            Write-Ok "Backup done ($($Config.BackupDir))."
+        }
+    }
+    # Prepared without touching the running CRM: the target is not in use yet.
+    if (-not (Install-VCRedist)) { Stop-Install "Visual C++ runtime installation failed. Nothing was changed." }
+    if (-not (Install-PHP -Version $to -DownloadName ("PHP" + ($to -replace '\.', '')))) { Stop-Install "PHP $to installation failed. The CRM still runs on PHP $from." }
+    if (-not (Install-IonCube -PHPVersion $to)) { Stop-Install "ionCube for PHP $to failed. The CRM still runs on PHP $from." }
+
+    Main-Repair -PHPVersion $to
+    $r = Get-LocalHttp "/"
+    if ($r.Code -eq 0 -or $r.Code -ge 500) {
+        Write-Err "The CRM answered HTTP $($r.Code) on PHP $to. Check $(Join-Path $Config.LogDir "php-$to-error.log")."
+        Write-Host "  To go back: run parsvt.ps1, option 6 (PHP $from is still installed)." -ForegroundColor Yellow
+        Stop-Install "The CRM does not answer correctly on PHP $to."
+    }
+    Write-Ok "The CRM now runs on PHP $to. PHP $from stays installed in $(Get-PHPDir $from); option 6 switches back."
 }
 
 function Main-IonCubeOnly {
@@ -3335,7 +3562,7 @@ if (-not (Test-Admin)) { Write-Err "This script must run as Administrator."; exi
 Write-Host "ParsVT CRM Installer for Windows" -ForegroundColor Yellow
 Write-Host "Version 2.11 - native PowerShell (no Cygwin, no XAMPP)" -ForegroundColor Yellow
 if ($DryRun) { Write-Host "DRY RUN MODE - no changes will be made" -ForegroundColor Magenta }
-if ($Quick)  { Write-Host "QUICK MODE - only the Vtiger version and the license key are asked; defaults are used for everything else" -ForegroundColor Magenta }
+if ($Quick)  { Write-Host "QUICK MODE - a new install asks only the Vtiger version and the license key; defaults are used for everything else" -ForegroundColor Magenta }
 Write-Host ""
 
 # Everything below runs inside one try/catch: any unexpected error ends in
@@ -3357,10 +3584,10 @@ try {
     if ($Quick -and (Test-Path (Join-Path $Config.WebRoot "config.inc.php"))) {
         # A second double-click on the launcher must never start a reinstall
         # (which only stops at the typed OVERWRITE after changing PHP and
-        # Apache). Reinstalling is menu option 1 without -Quick.
-        $choice = "3"
-        Write-Host "Quick mode: ParsVT CRM is already installed at $($Config.WebRoot); running Repair (keeps all data)." -ForegroundColor Cyan
-        Write-Host "  To reinstall from scratch, run parsvt.ps1 without -Quick and choose 1." -ForegroundColor Cyan
+        # Apache), so only the maintenance options are offered. Reinstalling
+        # is menu option 1 without -Quick.
+        $choice = Select-QuickMaintenance
+        if ($choice -eq "0") { Write-Host "Cancelled."; Suspend-InstallLog; exit 0 }
     }
     elseif ($Quick) {
         $choice = Select-QuickVtigerVersion
@@ -3372,6 +3599,8 @@ try {
         "2" { Main-Install -VtigerVersion 7 }
         "3" { Main-Repair }
         "4" { Main-IonCubeOnly }
+        "5" { Main-PHPUpdate }
+        "6" { Main-PHPSwitch }
         "0" { Write-Host "Cancelled."; Suspend-InstallLog; exit 0 }
         default { Stop-Install "Invalid selection." 2 }
     }

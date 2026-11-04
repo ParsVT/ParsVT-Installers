@@ -62,7 +62,7 @@ The launcher checks the server first (`preflight.ps1`), then asks **which Vtiger
   - Credential and database option files are readable by root/Administrators only: `/root/crm.txt` and `/root/mysql.txt` on Linux; `C:\parsvt-credentials.txt` and `backup.cnf` on Windows.
   - The ionCube loader is checked against the installed PHP before it is enabled (Windows: NTS, x64 and PHP build).
   - phpMyAdmin (Windows) is reachable from localhost and private networks only by default, and stores no password.
-- **Safe re-runs:** an existing CRM is never overwritten without a typed confirmation. The old web root is moved aside and the old database is dumped first. On Windows, Quick mode on an installed server runs Repair instead.
+- **Safe re-runs:** an existing CRM is never overwritten without a typed confirmation. The old web root is moved aside and the old database is dumped first. On Windows, Quick mode on an installed server offers only the maintenance options (Repair, ionCube, PHP update, PHP switch).
 - **Automated backups:** daily database and file backups, with a restore script.
   - Linux keeps the number of backup sets you choose during installation.
   - Windows keeps backups for 7 days.
@@ -126,8 +126,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\parsvt.ps1 [-Quick] [-Vtig
 
 | Flag | Effect |
 |---|---|
-| (none) | Menu: install Vtiger 8 or 7, Repair, update ionCube. Asks for port, paths, domain and SSL |
-| `-Quick` | Asks only for the Vtiger version and the license key; uses defaults (port 80, `C:\Apache24`, no domain or SSL). Runs Repair if the CRM is already installed |
+| (none) | Menu: install Vtiger 8 or 7, Repair, update ionCube, update PHP (same version), switch PHP 7.4 ↔ 8.3. Install asks for port, paths, domain and SSL |
+| `-Quick` | Asks only for the Vtiger version and the license key; uses defaults (port 80, `C:\Apache24`, no domain or SSL). On an installed server it shows the maintenance options instead (Enter = Repair) |
 | `-Vtiger 8` / `-Vtiger 7` | With `-Quick`: installs that version without asking |
 | `-SkipPreflight` | With `-Quick`: skips the pre-installation checks |
 | `-DryRun` | Shows what would be done without changing anything |
